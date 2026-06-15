@@ -1,5 +1,6 @@
 package com.cibore.earthcurvecalculator
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -45,15 +46,19 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -61,10 +66,18 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.preferencesDataStore
 import com.cibore.earthcurvecalculator.ui.theme.EarthCurveCalculatorTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.sqrt
+
+private val Context.dataStore by preferencesDataStore(name = "settings")
+private val IS_METRIC_KEY = booleanPreferencesKey("is_metric")
 
 enum class Screen {
     Splash, Calculator
@@ -137,7 +150,7 @@ fun SplashScreen(onSplashFinished: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "Earth Curve\nCalculator",
+                text = "Earth Curvature\nCalculator",
                 style = MaterialTheme.typography.headlineLarge.copy(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -151,18 +164,30 @@ fun SplashScreen(onSplashFinished: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CalculatorScreen() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val keyboardController = LocalSoftwareKeyboardController.current
+    
+    val isMetricFlow = remember {
+        context.dataStore.data.map { preferences ->
+            preferences[IS_METRIC_KEY] ?: true
+        }
+    }
+    val isMetric by isMetricFlow.collectAsState(initial = true)
+    
     var showInfoDialog by remember { mutableStateOf(false) }
-    var isMetric by remember { mutableStateOf(true) }
     var eyeHeight by remember { mutableStateOf("") }
     var targetDistance by remember { mutableStateOf("") }
     
-    var horizonDistanceResult by remember { mutableStateOf<Double?>(null) }
-    var hiddenHeightResult by remember { mutableStateOf<Double?>(null) }
+    var horizonDistanceResult by remember { mutableStateOf<String?>(null) }
+    var horizonUnitResult by remember { mutableStateOf("") }
+    var hiddenHeightResult by remember { mutableStateOf<String?>(null) }
+    var hiddenUnitResult by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Earth Curve Calculator", fontWeight = FontWeight.Bold) },
+                title = { Text("Earth Curvature Calculator", fontWeight = FontWeight.Bold) },
                 actions = {
                     IconButton(onClick = { showInfoDialog = true }) {
                         Icon(imageVector = Icons.Default.Info, contentDescription = "Info")
@@ -203,12 +228,6 @@ fun CalculatorScreen() {
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                 ) {
                     Column(modifier = Modifier.padding(24.dp)) {
-                        Text(
-                            text = "Units",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
                         Row(
                             Modifier
                                 .fillMaxWidth()
@@ -219,7 +238,9 @@ fun CalculatorScreen() {
                                 text = "Metric",
                                 selected = isMetric,
                                 onClick = { 
-                                    isMetric = true
+                                    scope.launch {
+                                        context.dataStore.edit { it[IS_METRIC_KEY] = true }
+                                    }
                                     horizonDistanceResult = null
                                     hiddenHeightResult = null
                                 }
@@ -229,7 +250,9 @@ fun CalculatorScreen() {
                                 text = "Imperial",
                                 selected = !isMetric,
                                 onClick = { 
-                                    isMetric = false
+                                    scope.launch {
+                                        context.dataStore.edit { it[IS_METRIC_KEY] = false }
+                                    }
                                     horizonDistanceResult = null
                                     hiddenHeightResult = null
                                 }
@@ -243,8 +266,12 @@ fun CalculatorScreen() {
 
                         OutlinedTextField(
                             value = eyeHeight,
-                            onValueChange = { eyeHeight = it },
-                            label = { Text("h0 = Eye height ($heightUnit)") },
+                            onValueChange = { newValue ->
+                                if (newValue.isEmpty() || newValue.replace(',', '.').toDoubleOrNull() != null || newValue == "." || newValue == "," || newValue == "-") {
+                                    eyeHeight = newValue
+                                }
+                            },
+                            label = { Text("Eye height ($heightUnit)") },
                             modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
@@ -255,8 +282,12 @@ fun CalculatorScreen() {
 
                         OutlinedTextField(
                             value = targetDistance,
-                            onValueChange = { targetDistance = it },
-                            label = { Text("d0 = Target distance ($distanceUnit)") },
+                            onValueChange = { newValue ->
+                                if (newValue.isEmpty() || newValue.replace(',', '.').toDoubleOrNull() != null || newValue == "." || newValue == "," || newValue == "-") {
+                                    targetDistance = newValue
+                                }
+                            },
+                            label = { Text("Target distance ($distanceUnit)") },
                             modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
@@ -267,13 +298,16 @@ fun CalculatorScreen() {
 
                         Button(
                             onClick = {
+                                keyboardController?.hide()
                                 calculate(
                                     eyeHeightStr = eyeHeight,
                                     targetDistanceStr = targetDistance,
                                     isMetric = isMetric,
-                                    onResult = { d1, h1 ->
-                                        horizonDistanceResult = d1
-                                        hiddenHeightResult = h1
+                                    onResult = { d1Val, d1Unit, h1Val, h1Unit ->
+                                        horizonDistanceResult = d1Val
+                                        horizonUnitResult = d1Unit
+                                        hiddenHeightResult = h1Val
+                                        hiddenUnitResult = h1Unit
                                     }
                                 )
                             },
@@ -290,15 +324,6 @@ fun CalculatorScreen() {
                 Spacer(modifier = Modifier.height(32.dp))
 
                 if (horizonDistanceResult != null) {
-                    Text(
-                        text = "Results",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp, start = 8.dp),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
@@ -313,15 +338,15 @@ fun CalculatorScreen() {
                                 .padding(24.dp)
                         ) {
                             ResultRow(
-                                label = "d1 = Horizon distance",
-                                value = String.format(Locale.getDefault(), "%.6f", horizonDistanceResult),
-                                unit = if (isMetric) "km" else "miles"
+                                label = "Horizon distance",
+                                value = horizonDistanceResult ?: "",
+                                unit = horizonUnitResult
                             )
                             Spacer(modifier = Modifier.height(20.dp))
                             ResultRow(
-                                label = "h1 = Target hidden height",
-                                value = String.format(Locale.getDefault(), "%.4f", hiddenHeightResult),
-                                unit = if (isMetric) "metres" else "feet"
+                                label = "Curvature height",
+                                value = hiddenHeightResult ?: "",
+                                unit = hiddenUnitResult
                             )
                         }
                     }
@@ -387,7 +412,7 @@ fun InfoDialog(onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { 
             Text(
-                "About Earth Curve Calculator", 
+                "About Earth Curvature Calculator", 
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             ) 
@@ -424,13 +449,13 @@ fun calculate(
     eyeHeightStr: String,
     targetDistanceStr: String,
     isMetric: Boolean,
-    onResult: (Double, Double) -> Unit
+    onResult: (String, String, String, String) -> Unit
 ) {
-    val h0 = eyeHeightStr.toDoubleOrNull() ?: 0.0
-    val d0 = targetDistanceStr.toDoubleOrNull() ?: 0.0
+    val h0 = eyeHeightStr.replace(',', '.').toDoubleOrNull() ?: 0.0
+    val d0 = targetDistanceStr.replace(',', '.').toDoubleOrNull() ?: 0.0
 
     if (h0 <= 0.0 || d0 <= 0.0) {
-        onResult(0.0, 0.0)
+        onResult("0.00", if (isMetric) "km" else "miles", "0.00", if (isMetric) "metres" else "feet")
         return
     }
 
@@ -438,19 +463,43 @@ fun calculate(
     val h0Base = if (isMetric) h0 / 1000.0 else h0 / 5280.0 // convert to earthRadius units (km or miles)
 
     // d1 = sqrt(2 * R * h0 + h0^2)
-    val d1 = sqrt(2 * earthRadius * h0Base + h0Base * h0Base)
+    val d1Val = sqrt(2 * earthRadius * h0Base + h0Base * h0Base)
+    val d1Str = String.format(Locale.US, "%.2f", d1Val)
+    val d1Unit = if (isMetric) "km" else "miles"
 
-    val h1Base = if (d0 > d1) {
-        val dDiff = d0 - d1
+    val h1Base = if (d0 > d1Val) {
+        val dDiff = d0 - d1Val
         // h1 = sqrt(dDiff^2 + R^2) - R
         sqrt(dDiff * dDiff + earthRadius * earthRadius) - earthRadius
     } else {
         0.0
     }
 
-    val h1 = if (isMetric) h1Base * 1000.0 else h1Base * 5280.0
+    val h1Final: Double
+    val h1Unit: String
+    if (isMetric) {
+        val h1Metres = h1Base * 1000.0
+        if (h1Metres >= 1000.0) {
+            h1Final = h1Metres / 1000.0
+            h1Unit = "km"
+        } else {
+            h1Final = h1Metres
+            h1Unit = "metres"
+        }
+    } else {
+        val h1Feet = h1Base * 5280.0
+        if (h1Feet >= 5280.0) {
+            h1Final = h1Feet / 5280.0
+            h1Unit = "miles"
+        } else {
+            h1Final = h1Feet
+            h1Unit = "feet"
+        }
+    }
 
-    onResult(d1, h1)
+    val h1Str = String.format(Locale.US, "%.2f", h1Final)
+
+    onResult(d1Str, d1Unit, h1Str, h1Unit)
 }
 
 @Preview(showBackground = true)
